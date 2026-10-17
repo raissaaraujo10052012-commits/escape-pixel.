@@ -1,0 +1,24 @@
+import { getStore } from "@netlify/blobs";
+const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS" };
+const respond = (statusCode, body) => new Response(JSON.stringify(body), { status: statusCode, headers });
+const store = () => getStore("escape-pixel-ranking");
+async function getRanking() { return (await (await store()).get("ranking", { type: "json" })) || []; }
+export default async (request) => {
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+  try {
+    if (request.method === "GET") return respond(200, { ranking: await getRanking() });
+    if (request.method === "POST") {
+      const body = await request.json(); const name = String(body.name || "").trim().slice(0, 18); const score = Number(body.score);
+      if (!name || !Number.isFinite(score) || score < 0) return respond(400, { error: "Invalid entry" });
+      const ranking = await getRanking(); ranking.push({ name, score, playedAt: String(body.playedAt || new Date().toISOString()) });
+      ranking.sort((a, b) => b.score - a.score || String(a.playedAt).localeCompare(String(b.playedAt)));
+      await (await store()).setJSON("ranking", ranking); return respond(200, { ranking });
+    }
+    if (request.method === "DELETE") {
+      const body = await request.json().catch(() => ({})); const expected = Netlify.env.get("RANKING_ADMIN_PIN");
+      if (!expected || String(body.pin || "") !== expected) return respond(401, { error: "Unauthorized" });
+      await (await store()).setJSON("ranking", []); return respond(200, { ranking: [] });
+    }
+    return respond(405, { error: "Method not allowed" });
+  } catch (error) { console.error("Ranking function error", error); return respond(500, { error: "Ranking service unavailable" }); }
+};
